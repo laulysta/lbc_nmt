@@ -1,1 +1,5 @@
 python train_baseline.py -dw 10 -d 20 -data testing
+
+qsub_launcher -t 168:00:00 python -u train_nmt.pronouns.two_gates.de_en.2017.py\ train_nmt.pronouns.two_gates.en_fr.2017.py\ train_nmt.pronouns.two_gates.en_de.2017.py\ train_nmt.pronouns.two_gates.es_en.2017.py
+
+./qsub_launcher -t 168:00:00 python -u train_nmt -dw 10 -d 20\ 30\ 40 -data testing

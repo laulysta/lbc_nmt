@@ -97,8 +97,16 @@ if dataset == "testing":
 elif dataset == "europarl_en_de":
     n_words_src=20000
     n_words_trg=20000
-    dictionary_trg='../data/europarl_de-en_txt.tok.low/vocab_de.pkl'
-    dictionary_src='../data/europarl_de-en_txt.tok.low/vocab_en.pkl'
+    datasets=['../data/europarl_de-en_txt.tok.low/europarl-v7.de-en.en.toc.low', 
+              '../data/europarl_de-en_txt.tok.low/europarl-v7.de-en.de.toc.low']
+    valid_datasets=['../data/europarl_de-en_txt.tok.low/newstest2015-ende-src.en.toc.low', 
+                    '../data/europarl_de-en_txt.tok.low/newstest2015-ende-ref.de.toc.low',
+                    '../data/europarl_de-en_txt.tok.low/newstest2015-ende-ref.de.toc.low']
+    other_datasets=['../data/europarl_de-en_txt.tok.low/newstest2016-ende-src.en.toc.low', 
+                    '../data/europarl_de-en_txt.tok.low/newstest2016-ende-ref.de.toc.low',
+                    '../data/europarl_de-en_txt.tok.low/newstest2016-ende-ref.de.toc.low']
+    dictionaries=['../data/europarl_de-en_txt.tok.low/vocab_en.pkl', 
+                  '../data/europarl_de-en_txt.tok.low/vocab_de.pkl']
 
     sizeTrainset = 1920210.0
     #batch_size = 64
@@ -117,7 +125,7 @@ validerr, testerr, validbleu, testbleu , nb_epoch, nb_batch = train(saveto=model
                                                                     dim=dim_model,
                                                                     encoder='gru',
                                                                     decoder='gru_cond_legacy', # if args.covVec_in_attention or args.covVec_in_decoder else 'gru_cond',
-                                                                    max_epochs=5, #100,
+                                                                    max_epochs=100,
                                                                     n_words_src=n_words_src,
                                                                     n_words=n_words_trg,
                                                                     optimizer='adadelta',
