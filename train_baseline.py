@@ -1,0 +1,166 @@
+import numpy as np
+import fcntl  # copy
+import itertools
+import sys, os
+import argparse
+import time
+import datetime
+from nmt import train
+from os.path import join as pjoin
+
+# Parse the arguments
+parser = argparse.ArgumentParser()
+parser.add_argument('-dw', '--dim_word', required=False, default='50', help='Size of the word representation')
+parser.add_argument('-d', '--dim_model', required=False, default='200', help='Size of the hidden representation')
+parser.add_argument('-l', '--lr', required=False, default='0.001', help='learning rate')
+parser.add_argument('-data', '--dataset', required=False, default='testing', help='ex: testing, europarl')
+parser.add_argument('-bs', '--batch_size', required=False, default='64', help='Size of the batch')
+parser.add_argument('-out', '--out_dir', required=False, default='.', help='Output directory for the model')
+
+#parser.add_argument('-ec', '--euclidean_coeff', default=0.1, type=float, help='Coefficient of the Euclidean distance in the cost (if coverage vector is used).')
+#parser.add_argument('-ca', '--covVec_in_attention', action="store_true", help='Coverage vector connected to the attentional part.')
+#parser.add_argument('-cd', '--covVec_in_decoder', action="store_true", help='Coverage vector connected to the decoder part.')
+#parser.add_argument('-cp', '--covVec_in_pred', action="store_true", help='Coverage vector connected to the prediction part.')
+
+
+
+args = parser.parse_args()
+
+dim_word = int(args.dim_word)
+dim_model = int(args.dim_model)
+lr = float(args.lr)
+dataset = args.dataset
+batch_size = int(args.batch_size)
+
+
+#Create names and folders
+####################################################################################
+dirPath = pjoin(args.out_dir, 'saved_models_baseline')
+if not os.path.exists(dirPath):
+    try:
+        os.makedirs(dirPath)
+    except OSError as e:
+        print e
+        print 'Exeption was catch, will continue script \n'
+
+list_options = [str(dim_word), str(dim_model), str(lr), str(batch_size)]
+
+str_options = "_".join(list_options)
+if dataset == "testing":
+    dirModelName = "model_gru_testing_ende_" + str_options
+elif dataset == "europarl_en_de":
+    dirModelName = "model_gru_europarl_ende_" + str_options
+else:
+    sys.exit("Wrong dataset")
+
+dirPathModel = pjoin(dirPath, dirModelName)
+if not os.path.exists(dirPathModel):
+    try:
+        os.makedirs(dirPathModel)
+    except OSError as e:
+        print e
+        print 'Exeption was catch, will continue script \n'
+
+modelName = os.path.join(dirPathModel, dirModelName + ".npz")
+#modelName = dirModelName + ".npz"
+
+dirPathOutput = pjoin(dirPathModel, 'output')
+if not os.path.exists(dirPathOutput):
+    try:
+        os.makedirs(dirPathOutput)
+    except OSError as e:
+        print e
+        print 'Exeption was catch, will continue script \n'
+
+###################################################################################
+
+
+if dataset == "testing":
+    n_words_src = 100#3449
+    n_words_trg = 100#4667
+    datasets=['../data/dataset_testing/trainset_en.txt', 
+              '../data/dataset_testing/trainset_de.txt']
+    valid_datasets=['../data/dataset_testing/validset_en.txt', 
+                    '../data/dataset_testing/validset_de.txt',
+                    '../data/dataset_testing/validset_de.txt']
+    other_datasets=['../data/dataset_testing/testset_en.txt', 
+                    '../data/dataset_testing/testset_de.txt',
+                    '../data/dataset_testing/testset_de.txt']
+    dictionaries=['../data/dataset_testing/vocab_en.pkl', 
+                  '../data/dataset_testing/vocab_de.pkl']
+
+    sizeTrainset = 1000.0
+    #batch_size = 64
+    nb_batch_epoch = np.ceil(sizeTrainset/batch_size)
+
+
+elif dataset == "europarl_en_de":
+    n_words_src=20000
+    n_words_trg=20000
+    dictionary_trg='../data/europarl_de-en_txt.tok.low/vocab_de.pkl'
+    dictionary_src='../data/europarl_de-en_txt.tok.low/vocab_en.pkl'
+
+    sizeTrainset = 1920210.0
+    #batch_size = 64
+    nb_batch_epoch = np.ceil(sizeTrainset/batch_size)
+
+
+reload_ = False
+saveFreq = nb_batch_epoch
+use_dropout = True
+
+
+
+validerr, testerr, validbleu, testbleu , nb_epoch, nb_batch = train(saveto=modelName,
+                                                                    reload_=reload_,
+                                                                    dim_word=dim_word,
+                                                                    dim=dim_model,
+                                                                    encoder='gru',
+                                                                    decoder='gru_cond_legacy', # if args.covVec_in_attention or args.covVec_in_decoder else 'gru_cond',
+                                                                    max_epochs=5, #100,
+                                                                    n_words_src=n_words_src,
+                                                                    n_words=n_words_trg,
+                                                                    optimizer='adadelta',
+                                                                    decay_c=0.,
+                                                                    alpha_c=0.,
+                                                                    clip_c=1.,
+                                                                    lrate=lr,
+                                                                    patience=10,
+                                                                    maxlen=50,
+                                                                    batch_size=batch_size,
+                                                                    valid_batch_size=batch_size,
+                                                                    validFreq=nb_batch_epoch, # freq in batch of computing cost for train, valid and test
+                                                                    dispFreq=nb_batch_epoch, # freq of diplaying the cost of one batch (e.g.: 1 is diplaying the cost of each batch)
+                                                                    saveFreq=saveFreq, # freq of saving the model per batch
+                                                                    sampleFreq=nb_batch_epoch, # freq of sampling per batch
+                                                                    datasets=datasets,
+                                                                    valid_datasets=valid_datasets,
+                                                                    other_datasets=other_datasets,
+                                                                    dictionaries=dictionaries,
+                                                                    use_dropout=use_dropout,
+                                                                    use_dec_word_dropout=use_dropout,
+                                                                    use_word_dropout=use_dropout,
+                                                                    rng=1234,
+                                                                    trng=1234,
+                                                                    save_inter=True, #save all the time
+                                                                    multibleu='multi-bleu.perl',
+                                                                    valid_output=dirPathOutput+'/valid_output.s2.2',
+                                                                    other_output=dirPathOutput+'/other_output.s2.2')
+
+# Prepare result line to append to result file
+line = "\t".join([str(dirModelName), str(dataset)] + list_options + [str(nb_epoch), str(nb_batch), str(validerr), str(testerr), str(validbleu), str(testbleu)]) + "\n"
+
+# Preparing result file
+results_file = dirPath + '/results.txt'
+if not os.path.exists(results_file):
+    # Create result file if doesn't exist
+    header_line = "\t".join(['dirModelName', 'dataset', 'dim_word', 'dim_model', 'lr', 'batch_size',
+                             'nb_epoch', 'nb_batch', 'valid_err', 'test_err', 'valid_BLEU', 'test_BLEU']) + '\n'
+    f = open(results_file, 'w')
+    f.write(header_line)
+    f.close()
+
+f = open(results_file, "a")
+fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+f.write(line)
+f.close()  # unlocks the file
