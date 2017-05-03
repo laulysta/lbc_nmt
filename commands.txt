@@ -4,3 +4,9 @@ python train_baseline.py -dw 10 -d 20 -data testing -r saved_models_baseline/mod
 
 
 qsub_launcher -t 168:00:00 python -u train_baseline.py -dw 620 -d 800\ 1000 \1200 -data europarl_en_de
+
+
+#SBATCH
+
+squeue -u sl174
+squeue -j 470523
