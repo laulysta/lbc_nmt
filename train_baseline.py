@@ -13,6 +13,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-dw', '--dim_word', required=False, default='50', help='Size of the word representation')
 parser.add_argument('-d', '--dim_model', required=False, default='200', help='Size of the hidden representation')
 parser.add_argument('-l', '--lr', required=False, default='0.001', help='learning rate')
+parser.add_argument('-r', '--reload_path', required=False, default='', help='ex: pathModel.npz')
 parser.add_argument('-data', '--dataset', required=False, default='testing', help='ex: testing, europarl')
 parser.add_argument('-bs', '--batch_size', required=False, default='64', help='Size of the batch')
 parser.add_argument('-out', '--out_dir', required=False, default='.', help='Output directory for the model')
@@ -31,46 +32,48 @@ dim_model = int(args.dim_model)
 lr = float(args.lr)
 dataset = args.dataset
 batch_size = int(args.batch_size)
-
-
-#Create names and folders
-####################################################################################
-dirPath = pjoin(args.out_dir, 'saved_models_baseline')
-if not os.path.exists(dirPath):
-    try:
-        os.makedirs(dirPath)
-    except OSError as e:
-        print e
-        print 'Exeption was catch, will continue script \n'
+reload_path = args.reload_path
 
 list_options = [str(dim_word), str(dim_model), str(lr), str(batch_size)]
 
-str_options = "_".join(list_options)
-if dataset == "testing":
-    dirModelName = "model_gru_testing_ende_" + str_options
-elif dataset == "europarl_en_de":
-    dirModelName = "model_gru_europarl_ende_" + str_options
-else:
-    sys.exit("Wrong dataset")
+#Create names and folders
+####################################################################################
+if reload_path == '':
+    dirPath = pjoin(args.out_dir, 'saved_models_baseline')
+    if not os.path.exists(dirPath):
+        try:
+            os.makedirs(dirPath)
+        except OSError as e:
+            print e
+            print 'Exeption was catch, will continue script \n'
 
-dirPathModel = pjoin(dirPath, dirModelName)
-if not os.path.exists(dirPathModel):
-    try:
-        os.makedirs(dirPathModel)
-    except OSError as e:
-        print e
-        print 'Exeption was catch, will continue script \n'
 
-modelName = os.path.join(dirPathModel, dirModelName + ".npz")
-#modelName = dirModelName + ".npz"
+    str_options = "_".join(list_options)
+    if dataset == "testing":
+        dirModelName = "model_gru_testing_ende_" + str_options
+    elif dataset == "europarl_en_de":
+        dirModelName = "model_gru_europarl_ende_" + str_options
+    else:
+        sys.exit("Wrong dataset")
 
-dirPathOutput = pjoin(dirPathModel, 'output')
-if not os.path.exists(dirPathOutput):
-    try:
-        os.makedirs(dirPathOutput)
-    except OSError as e:
-        print e
-        print 'Exeption was catch, will continue script \n'
+    dirPathModel = pjoin(dirPath, dirModelName)
+    if not os.path.exists(dirPathModel):
+        try:
+            os.makedirs(dirPathModel)
+        except OSError as e:
+            print e
+            print 'Exeption was catch, will continue script \n'
+
+    modelName = os.path.join(dirPathModel, dirModelName + ".npz")
+    #modelName = dirModelName + ".npz"
+
+    dirPathOutput = pjoin(dirPathModel, 'output')
+    if not os.path.exists(dirPathOutput):
+        try:
+            os.makedirs(dirPathOutput)
+        except OSError as e:
+            print e
+            print 'Exeption was catch, will continue script \n'
 
 ###################################################################################
 
@@ -113,7 +116,21 @@ elif dataset == "europarl_en_de":
     nb_batch_epoch = np.ceil(sizeTrainset/batch_size)
 
 
-reload_ = False
+
+if reload_path != '':
+    reload_ = True
+    modelName = reload_path
+    dirModelName = modelName.split('/')[-1] + '_reload'
+    dirPath = '/'.join(modelName.split('/')[0:-1])
+    dirPathOutput = pjoin(dirPath, 'output')
+    if not os.path.exists(dirPathOutput):
+        try:
+            os.makedirs(dirPathOutput)
+        except OSError as e:
+            print e
+            print 'Exeption was catch, will continue script \n'
+else:
+    reload_ = False
 saveFreq = nb_batch_epoch
 use_dropout = True
 
@@ -125,7 +142,7 @@ validerr, testerr, validbleu, testbleu , nb_epoch, nb_batch = train(saveto=model
                                                                     dim=dim_model,
                                                                     encoder='gru',
                                                                     decoder='gru_cond_legacy', # if args.covVec_in_attention or args.covVec_in_decoder else 'gru_cond',
-                                                                    max_epochs=100,
+                                                                    max_epochs=5,
                                                                     n_words_src=n_words_src,
                                                                     n_words=n_words_trg,
                                                                     optimizer='adadelta',

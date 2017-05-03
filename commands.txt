@@ -1,3 +1,6 @@
 python train_baseline.py -dw 10 -d 20 -data testing
 
+python train_baseline.py -dw 10 -d 20 -data testing -r saved_models_baseline/model_gru_testing_ende_10_20_0.001_64/reload/model_gru_testing_ende_10_20_0.001_64_1_16.npz
+
+
 qsub_launcher -t 168:00:00 python -u train_baseline.py -dw 620 -d 800\ 1000 \1200 -data europarl_en_de
