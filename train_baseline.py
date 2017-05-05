@@ -142,7 +142,7 @@ validerr, testerr, validbleu, testbleu , nb_epoch, nb_batch = train(saveto=model
                                                                     dim=dim_model,
                                                                     encoder='gru',
                                                                     decoder='gru_cond_legacy', # if args.covVec_in_attention or args.covVec_in_decoder else 'gru_cond',
-                                                                    max_epochs=5,
+                                                                    max_epochs=100,
                                                                     n_words_src=n_words_src,
                                                                     n_words=n_words_trg,
                                                                     optimizer='adadelta',
