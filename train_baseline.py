@@ -150,7 +150,7 @@ validerr, testerr, validbleu, testbleu , nb_epoch, nb_batch = train(saveto=model
                                                                     alpha_c=0.,
                                                                     clip_c=1.,
                                                                     lrate=lr,
-                                                                    patience=10,
+                                                                    patience=5,
                                                                     maxlen=50,
                                                                     batch_size=batch_size,
                                                                     valid_batch_size=batch_size,
