@@ -15,6 +15,7 @@ parser.add_argument('-d', '--dim_model', required=False, default='200', help='Si
 parser.add_argument('-l', '--lr', required=False, default='0.001', help='learning rate')
 parser.add_argument('-r', '--reload_path', required=False, default='', help='ex: pathModel.npz')
 parser.add_argument('-data', '--dataset', required=False, default='testing', help='ex: testing, europarl')
+parser.add_argument('-m', '--model', required=False, default='baseline', help='ex: baseline, lbc, lbc_tot')
 parser.add_argument('-bs', '--batch_size', required=False, default='64', help='Size of the batch')
 parser.add_argument('-out', '--out_dir', required=False, default='.', help='Output directory for the model')
 
@@ -31,15 +32,16 @@ dim_word = int(args.dim_word)
 dim_model = int(args.dim_model)
 lr = float(args.lr)
 dataset = args.dataset
+model = str(args.model)
 batch_size = int(args.batch_size)
 reload_path = args.reload_path
 
-list_options = [str(dim_word), str(dim_model), str(lr), str(batch_size)]
+list_options = [str(model), str(dim_word), str(dim_model), str(lr), str(batch_size)]
 
 #Create names and folders
 ####################################################################################
 if reload_path == '':
-    dirPath = pjoin(args.out_dir, 'saved_models_baseline')
+    dirPath = pjoin(args.out_dir, 'saved_models_' + model)
     if not os.path.exists(dirPath):
         try:
             os.makedirs(dirPath)
@@ -133,7 +135,14 @@ else:
     reload_ = False
 saveFreq = nb_batch_epoch
 use_dropout = True
-
+if model == 'baseline':
+    decoder = 'gru_cond_legacy'
+elif model == 'lbc':
+    decoder = 'gru_cond_legacy_lbc'
+elif model == 'lbc_tot':
+    decoder = 'gru_cond_legacy_lbc_tot'
+else:
+    sys.exit("Wrong arg model")
 
 
 validerr, testerr, validbleu, testbleu , nb_epoch, nb_batch = train(saveto=modelName,
@@ -141,8 +150,8 @@ validerr, testerr, validbleu, testbleu , nb_epoch, nb_batch = train(saveto=model
                                                                     dim_word=dim_word,
                                                                     dim=dim_model,
                                                                     encoder='gru',
-                                                                    decoder='gru_cond_legacy_lbc', # if args.covVec_in_attention or args.covVec_in_decoder else 'gru_cond',
-                                                                    max_epochs=100,
+                                                                    decoder=decoder, # 'gru_cond_legacy_lbc', # if args.covVec_in_attention or args.covVec_in_decoder else 'gru_cond',
+                                                                    max_epochs=5,
                                                                     n_words_src=n_words_src,
                                                                     n_words=n_words_trg,
                                                                     optimizer='adadelta',
@@ -150,7 +159,7 @@ validerr, testerr, validbleu, testbleu , nb_epoch, nb_batch = train(saveto=model
                                                                     alpha_c=0.,
                                                                     clip_c=1.,
                                                                     lrate=lr,
-                                                                    patience=5,
+                                                                    patience=100,
                                                                     maxlen=5000,
                                                                     batch_size=batch_size,
                                                                     valid_batch_size=batch_size,
@@ -179,7 +188,7 @@ line = "\t".join([str(dirModelName), str(dataset)] + list_options + [str(nb_epoc
 results_file = dirPath + '/results.txt'
 if not os.path.exists(results_file):
     # Create result file if doesn't exist
-    header_line = "\t".join(['dirModelName', 'dataset', 'dim_word', 'dim_model', 'lr', 'batch_size',
+    header_line = "\t".join(['dirModelName', 'dataset', 'model', 'dim_word', 'dim_model', 'lr', 'batch_size',
                              'nb_epoch', 'nb_batch', 'valid_err', 'test_err', 'valid_BLEU', 'test_BLEU']) + '\n'
     f = open(results_file, 'w')
     f.write(header_line)

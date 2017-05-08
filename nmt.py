@@ -98,6 +98,7 @@ layers = {'ff': ('param_init_fflayer', 'fflayer'),
           'gru_cond': ('param_init_gru_cond', 'gru_cond_layer'),
           'gru_cond_legacy': ('param_init_gru_cond_legacy', 'gru_cond_legacy_layer'),
           'gru_cond_legacy_lbc': ('param_init_gru_cond_legacy_lbc', 'gru_cond_legacy_lbc_layer'),
+          'gru_cond_legacy_lbc_tot': ('param_init_gru_cond_legacy_lbc', 'gru_cond_legacy_lbc_layer'),
           'lstm': ('param_init_lstm', 'lstm_layer'),
           'lstm_cond_legacy': ('param_init_lstm_cond_legacy', 'lstm_cond_legacy_layer'),
           'lstm_cond': ('param_init_lstm_cond', 'lstm_cond_layer'),
@@ -1973,7 +1974,7 @@ def init_params(options):
                                               dim=options['dim'],
                                               dimctx=ctxdim, rng=rng)
 
-    if options['decoder'] == 'gru_cond_legacy_lbc':
+    if options['decoder'].startswith('gru_cond_legacy_lbc'):
         params = get_layer('ff')[0](options, params, prefix='ff_logit_lstm_lbc',
                                 nin=options['dim']*2, nout=options['dim_word'],
                                 ortho=False, rng=rng)
@@ -2104,7 +2105,7 @@ def build_model(tparams, options):
     # weights (alignment matrix)
     opt_ret['dec_alphas'] = proj[2]
 
-    if options['decoder'] == 'gru_cond_legacy_lbc':
+    if options['decoder'].startswith('gru_cond_legacy_lbc'):
         # Next hidden states of the decoder gru
         proj_h2 = proj[3]
         ctxs2 = proj[4]
@@ -2125,7 +2126,21 @@ def build_model(tparams, options):
             logit = dropout_layer(logit, use_noise, trng, p=1.0-options['kwargs'].get('use_dropout_p', 0.5))
         logit = get_layer('ff')[1](tparams, logit, options, 
                                prefix='ff_logit_lbc', activ='linear')
-    else:
+
+
+        logit_shp = logit.shape
+        probs = tensor.nnet.softmax(logit.reshape([logit_shp[0]*logit_shp[1],
+                                                   logit_shp[2]]))
+
+        # cost
+        y_flat = y.flatten()
+        y_flat_idx = tensor.arange(y_flat.shape[0]) * options['n_words'] + y_flat
+        cost_ = -tensor.log(probs.flatten()[y_flat_idx])
+        cost_ = cost_.reshape([y.shape[0], y.shape[1]])
+        cost_ = (cost_ * y_mask)
+        cost = cost_.sum(0)
+
+    if options['decoder'] != 'gru_cond_legacy_lbc':
         # compute word probabilities
         logit_lstm = get_layer('ff')[1](tparams, proj_h, options,
                                         prefix='ff_logit_lstm', activ='linear')
@@ -2139,17 +2154,21 @@ def build_model(tparams, options):
         logit = get_layer('ff')[1](tparams, logit, options, 
                                prefix='ff_logit', activ='linear')
 
-    logit_shp = logit.shape
-    probs = tensor.nnet.softmax(logit.reshape([logit_shp[0]*logit_shp[1],
-                                               logit_shp[2]]))
+        logit_shp = logit.shape
+        probs = tensor.nnet.softmax(logit.reshape([logit_shp[0]*logit_shp[1],
+                                                   logit_shp[2]]))
 
-    # cost
-    y_flat = y.flatten()
-    y_flat_idx = tensor.arange(y_flat.shape[0]) * options['n_words'] + y_flat
-    cost_ = -tensor.log(probs.flatten()[y_flat_idx])
-    cost_ = cost_.reshape([y.shape[0], y.shape[1]])
-    cost_ = (cost_ * y_mask)
-    cost = cost_.sum(0)
+        # cost
+        y_flat = y.flatten()
+        y_flat_idx = tensor.arange(y_flat.shape[0]) * options['n_words'] + y_flat
+        cost_ = -tensor.log(probs.flatten()[y_flat_idx])
+        cost_ = cost_.reshape([y.shape[0], y.shape[1]])
+        cost_ = (cost_ * y_mask)
+        cost2 = cost_.sum(0)
+        if options['decoder'].startswith('gru_cond_legacy_lbc'):
+            cost += cost2
+        else:
+            cost = cost2
 
     return trng, use_noise, x, x_mask, y, y_mask, opt_ret, cost, cost_
 
@@ -2228,7 +2247,7 @@ def build_sampler(tparams, options, trng, use_noise=None):
     ctxs = proj[1]
 
 
-    if options['decoder'] == 'gru_cond_legacy_lbc':
+    if options['decoder'].startswith('gru_cond_legacy_lbc'):
         # Next hidden states of the decoder gru
         proj_h2 = proj[3]
         ctxs2 = proj[4]
@@ -2494,7 +2513,7 @@ def build_sampler_2(tparams, options, trng, use_noise=None):
     ctxs = proj[1]
 
 
-    if options['decoder'] == 'gru_cond_legacy_lbc':
+    if options['decoder'].startswith('gru_cond_legacy_lbc'):
         # Next hidden states of the decoder gru
         proj_h2 = proj[3]
         ctxs2 = proj[4]
@@ -2889,7 +2908,7 @@ def train(rng=123,
     if reload_ and os.path.exists(saveto):
         with open('%s.pkl' % saveto, 'rb') as f:
             models_options = pkl.load(f)
-        if decoder == 'gru_cond_legacy_lbc':
+        if decoder.startswith('gru_cond_legacy_lbc'):
             model_options['decoder'] = decoder
 
     print 'Loading data'
