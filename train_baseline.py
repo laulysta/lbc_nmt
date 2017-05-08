@@ -160,7 +160,7 @@ validerr, testerr, validbleu, testbleu , nb_epoch, nb_batch = train(saveto=model
                                                                     clip_c=1.,
                                                                     lrate=lr,
                                                                     patience=5,
-                                                                    maxlen=5000,
+                                                                    maxlen=50,
                                                                     batch_size=batch_size,
                                                                     valid_batch_size=batch_size,
                                                                     validFreq=nb_batch_epoch, # freq in batch of computing cost for train, valid and test
