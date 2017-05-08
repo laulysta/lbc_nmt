@@ -141,7 +141,7 @@ validerr, testerr, validbleu, testbleu , nb_epoch, nb_batch = train(saveto=model
                                                                     dim_word=dim_word,
                                                                     dim=dim_model,
                                                                     encoder='gru',
-                                                                    decoder='gru_cond_legacy', # if args.covVec_in_attention or args.covVec_in_decoder else 'gru_cond',
+                                                                    decoder='gru_cond_legacy_lbc', # if args.covVec_in_attention or args.covVec_in_decoder else 'gru_cond',
                                                                     max_epochs=100,
                                                                     n_words_src=n_words_src,
                                                                     n_words=n_words_trg,
@@ -151,7 +151,7 @@ validerr, testerr, validbleu, testbleu , nb_epoch, nb_batch = train(saveto=model
                                                                     clip_c=1.,
                                                                     lrate=lr,
                                                                     patience=5,
-                                                                    maxlen=50,
+                                                                    maxlen=5000,
                                                                     batch_size=batch_size,
                                                                     valid_batch_size=batch_size,
                                                                     validFreq=nb_batch_epoch, # freq in batch of computing cost for train, valid and test

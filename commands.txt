@@ -10,3 +10,5 @@ qsub_launcher -t 168:00:00 python -u train_baseline.py -dw 620 -d 800\ 1000 \120
 
 squeue -u sl174
 squeue -j 470523
+
+scancel 470523

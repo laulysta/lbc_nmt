@@ -22,7 +22,7 @@ import os.path
 from collections import OrderedDict
 
 from data_iterator import TextIterator
-
+#import theano.printing as printing
 profile = False
 
 floatX = theano.config.floatX
@@ -579,7 +579,10 @@ def param_init_gru_cond_legacy_lbc(options, params, prefix='gru_cond_legacy',
 
 def gru_cond_legacy_lbc_layer(tparams, state_below, options, prefix='gru_cond_legacy',
                    mask=None, context=None, one_step=False, init_state=None,
-                   context_mask=None, **kwargs):
+                   context_mask=None, use_noise=None, trng=None, **kwargs):
+
+    assert use_noise, 'use_noise must be provided'
+    assert trng, 'trng must be provided'
 
     assert context, 'Context must be provided'
     assert context.ndim == 3, \
@@ -624,8 +627,9 @@ def gru_cond_legacy_lbc_layer(tparams, state_below, options, prefix='gru_cond_le
 
     # step function to be used by scan
     # arguments    | sequences      |  outputs-info   | non-seqs ...
-    def _step_slice(m_, x_, xx_, xc_, h_, ctx_, alpha_, pctx_, cc_,
-                    U, Wc, Wd_att, U_att, c_tt, Ux, Wcx):
+    def _step_slice(m_, s_, x_, xx_, xc_, h_, ctx_, alpha_, h2_, ctx2_, emb_, pctx_, cc_,
+                    U, Wc, Wd_att, U_att, c_tt, Ux, Wcx,
+                    Wi_att, Wx, bx, W, b, Wll, bll, Wlp, blp, Wlc, blc, Wl, bl, Wemb):
 
         # attention
         # project previous hidden state
@@ -673,12 +677,62 @@ def gru_cond_legacy_lbc_layer(tparams, state_below, options, prefix='gru_cond_le
         h = m_[:, None] * h + (1. - m_)[:, None] * h_
 
         #####################################################
-        
+        logit = tensor.dot(h, Wll) + bll
+        logit += tensor.dot(s_, Wlp) + blp
+        logit += tensor.dot(ctx_, Wlc) + blc
+        logit = tensor.tanh(logit)
+        if options['use_dropout']:
+            #logit = dropout_layer(logit, use_noise, trng, p=0.5)
+            logit = logit * 0.5
+        pred_score = tensor.dot(logit, Wl) + bl
+        pred = tensor.argmax(pred_score, axis=1)
+
+        emb = Wemb[pred]
+
+        pstate2_ = tensor.dot(h, Wd_att)
+        pctx2__ = pctx_ + pstate2_[None, :, :]
+        pctx2__ += tensor.dot(emb, Wi_att) # xc_
+        pctx2__ = tensor.tanh(pctx2__)
+
+        # compute alignment weights
+        alpha = tensor.dot(pctx2__, U_att)+c_tt
+        alpha = alpha.reshape([alpha.shape[0], alpha.shape[1]])
+        if options['kwargs'].get('stable', False):
+            max_alpha = alpha.max(axis=0)
+            alpha = alpha - max_alpha
+        alpha = tensor.exp(alpha)
+        if context_mask:
+            alpha = alpha * context_mask
+        alpha = alpha / alpha.sum(0, keepdims=True)
+
+        # conpute the weighted averages - current context to gru
+        ctx2_ = (cc_ * alpha[:, :, None]).sum(0)
+
+        # conditional gru layer computations
+        preact2 = tensor.dot(h, U)
+        preact2 += tensor.dot(emb, W) + b # x_
+        preact2 += tensor.dot(ctx2_, Wc)
+        preact2 = tensor.nnet.sigmoid(preact2)
+
+        # reset and update gates
+        r2 = _slice(preact, 0, dim)
+        u2 = _slice(preact, 1, dim)
+
+        preactx2 = tensor.dot(h, Ux)
+        preactx2 *= r2
+        preactx2 += tensor.dot(emb, Wx) + bx # xx_
+        preactx2 += tensor.dot(ctx2_, Wcx)
+
+        # hidden state proposal, leaky integrate and obtain next hidden state
+        h2 = tensor.tanh(preactx2)
+        h2 = u2 * h + (1. - u2) * h2
+        h2 = m_[:, None] * h2 + (1. - m_)[:, None] * h # We don't change the mask 
+
         #####################################################
 
-        return h, ctx_, alpha.T
+        return h, ctx_, alpha.T, h2, ctx2_, emb
 
-    seqs = [mask, state_below_, state_belowx, state_belowc]
+    seqs = [mask, state_below, state_below_, state_belowx, state_belowc]
     _step = _step_slice
 
     shared_vars = [tparams[_p(prefix, 'U')],
@@ -687,18 +741,35 @@ def gru_cond_legacy_lbc_layer(tparams, state_below, options, prefix='gru_cond_le
                    tparams[_p(prefix, 'U_att')],
                    tparams[_p(prefix, 'c_tt')],
                    tparams[_p(prefix, 'Ux')],
-                   tparams[_p(prefix, 'Wcx')]]
+                   tparams[_p(prefix, 'Wcx')],
+                   tparams[_p(prefix, 'Wi_att')],
+                   tparams[_p(prefix, 'Wx')],
+                   tparams[_p(prefix, 'bx')],
+                   tparams[_p(prefix, 'W')],
+                   tparams[_p(prefix, 'b')],
+                   tparams['ff_logit_lstm_W'],
+                   tparams['ff_logit_lstm_b'],
+                   tparams['ff_logit_prev_W'],
+                   tparams['ff_logit_prev_b'],
+                   tparams['ff_logit_ctx_W'],
+                   tparams['ff_logit_ctx_b'],
+                   tparams['ff_logit_W'],
+                   tparams['ff_logit_b'],
+                   tparams['Wemb_dec']]
 
     if one_step:
         rval = _step(*(
-            seqs+[init_state, None, None, pctx_, context]+shared_vars))
+            seqs+[init_state, None, None, None, None, None, pctx_, context]+shared_vars))
     else:
         rval, updates = theano.scan(
             _step,
             sequences=seqs,
             outputs_info=[init_state,
                           tensor.alloc(0., n_samples, context.shape[2]),
-                          tensor.alloc(0., n_samples, context.shape[0])],
+                          tensor.alloc(0., n_samples, context.shape[0]),
+                          tensor.zeros_like(init_state),
+                          tensor.alloc(0., n_samples, context.shape[2]),
+                          tensor.alloc(0., n_samples, state_below.shape[2])],
             non_sequences=[pctx_,
                            context]+shared_vars,
             name=_p(prefix, '_layers'),
@@ -1901,6 +1972,21 @@ def init_params(options):
                                               nin=options['dim_word'],
                                               dim=options['dim'],
                                               dimctx=ctxdim, rng=rng)
+
+    if options['decoder'] == 'gru_cond_legacy_lbc':
+        params = get_layer('ff')[0](options, params, prefix='ff_logit_lstm_lbc',
+                                nin=options['dim']*2, nout=options['dim_word'],
+                                ortho=False, rng=rng)
+        params = get_layer('ff')[0](options, params, prefix='ff_logit_prev_lbc',
+                                    nin=options['dim_word']*2,
+                                    nout=options['dim_word'], ortho=False, rng=rng)
+        params = get_layer('ff')[0](options, params, prefix='ff_logit_ctx_lbc',
+                                    nin=ctxdim*2, nout=options['dim_word'],
+                                    ortho=False, rng=rng)
+        params = get_layer('ff')[0](options, params, prefix='ff_logit_lbc',
+                                    nin=options['dim_word'],
+                                    nout=options['n_words'], rng=rng)
+
     # readout
     params = get_layer('ff')[0](options, params, prefix='ff_logit_lstm',
                                 nin=options['dim'], nout=options['dim_word'],
@@ -1914,6 +2000,9 @@ def init_params(options):
     params = get_layer('ff')[0](options, params, prefix='ff_logit',
                                 nin=options['dim_word'],
                                 nout=options['n_words'], rng=rng)
+
+    
+
 
     return params
 
@@ -1995,7 +2084,7 @@ def build_model(tparams, options):
         emb = dropout_layer(emb, use_noise, trng, p=1.0-options['kwargs'].get('use_dec_word_dropout_p', 0.5))
 
     y_mask__ = y_mask
-
+    #ctx = printing.Print('test_ctx')(ctx)
     # decoder - pass through the decoder conditional gru with attention
     proj = get_layer(options['decoder'])[1](tparams, emb, options,
                                             prefix='decoder',
@@ -2003,7 +2092,9 @@ def build_model(tparams, options):
                                             context_mask=x_mask,
                                             one_step=False,
                                             init_state=init_state,
-                                            init_memory=init_memory)
+                                            init_memory=init_memory,
+                                            use_noise=use_noise,
+                                            trng=trng)
     # hidden states of the decoder gru
     proj_h = proj[0]
 
@@ -2013,18 +2104,41 @@ def build_model(tparams, options):
     # weights (alignment matrix)
     opt_ret['dec_alphas'] = proj[2]
 
-    # compute word probabilities
-    logit_lstm = get_layer('ff')[1](tparams, proj_h, options,
-                                    prefix='ff_logit_lstm', activ='linear')
-    logit_prev = get_layer('ff')[1](tparams, emb_copy, options,
-                                    prefix='ff_logit_prev', activ='linear')
-    logit_ctx = get_layer('ff')[1](tparams, ctxs, options,
-                                   prefix='ff_logit_ctx', activ='linear')
-    logit = tensor.tanh(logit_lstm+logit_prev+logit_ctx)
-    if options['use_dropout']:
-        logit = dropout_layer(logit, use_noise, trng, p=1.0-options['kwargs'].get('use_dropout_p', 0.5))
-    logit = get_layer('ff')[1](tparams, logit, options, 
+    if options['decoder'] == 'gru_cond_legacy_lbc':
+        # Next hidden states of the decoder gru
+        proj_h2 = proj[3]
+        ctxs2 = proj[4]
+        emb_pred = proj[5]
+
+        proj_h_h2 = concatenate([proj_h, proj_h2], axis=proj_h.ndim-1)
+        ctxs_ctxs2 = concatenate([ctxs, ctxs2], axis=ctxs.ndim-1)
+        emb_copy_pred = concatenate([emb_copy, emb_pred], axis=emb_copy.ndim-1)
+        # compute word probabilities
+        logit_lstm_lbc = get_layer('ff')[1](tparams, proj_h_h2, options,
+                                        prefix='ff_logit_lstm_lbc', activ='linear')
+        logit_prev_lbc = get_layer('ff')[1](tparams, emb_copy_pred, options,
+                                        prefix='ff_logit_prev_lbc', activ='linear')
+        logit_ctx_lbc = get_layer('ff')[1](tparams, ctxs_ctxs2, options,
+                                       prefix='ff_logit_ctx_lbc', activ='linear')
+        logit = tensor.tanh(logit_lstm_lbc+logit_prev_lbc+logit_ctx_lbc)
+        if options['use_dropout']:
+            logit = dropout_layer(logit, use_noise, trng, p=1.0-options['kwargs'].get('use_dropout_p', 0.5))
+        logit = get_layer('ff')[1](tparams, logit, options, 
+                               prefix='ff_logit_lbc', activ='linear')
+    else:
+        # compute word probabilities
+        logit_lstm = get_layer('ff')[1](tparams, proj_h, options,
+                                        prefix='ff_logit_lstm', activ='linear')
+        logit_prev = get_layer('ff')[1](tparams, emb_copy, options,
+                                        prefix='ff_logit_prev', activ='linear')
+        logit_ctx = get_layer('ff')[1](tparams, ctxs, options,
+                                       prefix='ff_logit_ctx', activ='linear')
+        logit = tensor.tanh(logit_lstm+logit_prev+logit_ctx)
+        if options['use_dropout']:
+            logit = dropout_layer(logit, use_noise, trng, p=1.0-options['kwargs'].get('use_dropout_p', 0.5))
+        logit = get_layer('ff')[1](tparams, logit, options, 
                                prefix='ff_logit', activ='linear')
+
     logit_shp = logit.shape
     probs = tensor.nnet.softmax(logit.reshape([logit_shp[0]*logit_shp[1],
                                                logit_shp[2]]))
@@ -2102,7 +2216,9 @@ def build_sampler(tparams, options, trng, use_noise=None):
                                             mask=None, context=ctx,
                                             one_step=True,
                                             init_state=init_state,
-                                            init_memory=init_memory)
+                                            init_memory=init_memory,
+                                            use_noise=use_noise,
+                                            trng=trng)
     # get the next hidden state
     next_state = proj[0]
     if options['decoder'].startswith('lstm'):
@@ -2111,17 +2227,40 @@ def build_sampler(tparams, options, trng, use_noise=None):
     # get the weighted averages of context for this target word y
     ctxs = proj[1]
 
-    logit_lstm = get_layer('ff')[1](tparams, next_state, options,
-                                    prefix='ff_logit_lstm', activ='linear')
-    logit_prev = get_layer('ff')[1](tparams, emb_copy, options,
-                                    prefix='ff_logit_prev', activ='linear')
-    logit_ctx = get_layer('ff')[1](tparams, ctxs, options,
-                                   prefix='ff_logit_ctx', activ='linear')
-    logit = tensor.tanh(logit_lstm+logit_prev+logit_ctx)
-    if options['use_dropout']:
-        logit = dropout_layer(logit, use_noise, trng, p=1.0-options['kwargs'].get('use_dropout_p', 0.5))
-    logit = get_layer('ff')[1](tparams, logit, options,
-                               prefix='ff_logit', activ='linear')
+
+    if options['decoder'] == 'gru_cond_legacy_lbc':
+        # Next hidden states of the decoder gru
+        proj_h2 = proj[3]
+        ctxs2 = proj[4]
+        emb_pred = proj[5]
+
+        proj_h_h2 = concatenate([next_state, proj_h2], axis=next_state.ndim-1)
+        ctxs_ctxs2 = concatenate([ctxs, ctxs2], axis=ctxs.ndim-1)
+        emb_copy_pred = concatenate([emb_copy, emb_pred], axis=emb_copy.ndim-1)
+        # compute word probabilities
+        logit_lstm_lbc = get_layer('ff')[1](tparams, proj_h_h2, options,
+                                        prefix='ff_logit_lstm_lbc', activ='linear')
+        logit_prev_lbc = get_layer('ff')[1](tparams, emb_copy_pred, options,
+                                        prefix='ff_logit_prev_lbc', activ='linear')
+        logit_ctx_lbc = get_layer('ff')[1](tparams, ctxs_ctxs2, options,
+                                       prefix='ff_logit_ctx_lbc', activ='linear')
+        logit = tensor.tanh(logit_lstm_lbc+logit_prev_lbc+logit_ctx_lbc)
+        if options['use_dropout']:
+            logit = dropout_layer(logit, use_noise, trng, p=1.0-options['kwargs'].get('use_dropout_p', 0.5))
+        logit = get_layer('ff')[1](tparams, logit, options, 
+                               prefix='ff_logit_lbc', activ='linear')
+    else:
+        logit_lstm = get_layer('ff')[1](tparams, next_state, options,
+                                        prefix='ff_logit_lstm', activ='linear')
+        logit_prev = get_layer('ff')[1](tparams, emb_copy, options,
+                                        prefix='ff_logit_prev', activ='linear')
+        logit_ctx = get_layer('ff')[1](tparams, ctxs, options,
+                                       prefix='ff_logit_ctx', activ='linear')
+        logit = tensor.tanh(logit_lstm+logit_prev+logit_ctx)
+        if options['use_dropout']:
+            logit = dropout_layer(logit, use_noise, trng, p=1.0-options['kwargs'].get('use_dropout_p', 0.5))
+        logit = get_layer('ff')[1](tparams, logit, options,
+                                   prefix='ff_logit', activ='linear')
 
     # compute the softmax probability
     next_probs = tensor.nnet.softmax(logit)
@@ -2343,7 +2482,9 @@ def build_sampler_2(tparams, options, trng, use_noise=None):
                                             mask=None, context=ctx, context_mask=x_mask,
                                             one_step=True,
                                             init_state=init_state,
-                                            init_memory=init_memory)
+                                            init_memory=init_memory,
+                                            use_noise=use_noise,
+                                            trng=trng)
     # get the next hidden state
     next_state = proj[0]
     if options['decoder'].startswith('lstm'):
@@ -2352,17 +2493,40 @@ def build_sampler_2(tparams, options, trng, use_noise=None):
     # get the weighted averages of context for this target word y
     ctxs = proj[1]
 
-    logit_lstm = get_layer('ff')[1](tparams, next_state, options,
-                                    prefix='ff_logit_lstm', activ='linear')
-    logit_prev = get_layer('ff')[1](tparams, emb_copy, options,
-                                    prefix='ff_logit_prev', activ='linear')
-    logit_ctx = get_layer('ff')[1](tparams, ctxs, options,
-                                   prefix='ff_logit_ctx', activ='linear')
-    logit = tensor.tanh(logit_lstm+logit_prev+logit_ctx)
-    if options['use_dropout']:
-        logit = dropout_layer(logit, use_noise, trng, p=1.0-options['kwargs'].get('use_dropout_p', 0.5))
-    logit = get_layer('ff')[1](tparams, logit, options,
-                               prefix='ff_logit', activ='linear')
+
+    if options['decoder'] == 'gru_cond_legacy_lbc':
+        # Next hidden states of the decoder gru
+        proj_h2 = proj[3]
+        ctxs2 = proj[4]
+        emb_pred = proj[5]
+
+        proj_h_h2 = concatenate([next_state, proj_h2], axis=next_state.ndim-1)
+        ctxs_ctxs2 = concatenate([ctxs, ctxs2], axis=ctxs.ndim-1)
+        emb_copy_pred = concatenate([emb_copy, emb_pred], axis=emb_copy.ndim-1)
+        # compute word probabilities
+        logit_lstm_lbc = get_layer('ff')[1](tparams, proj_h_h2, options,
+                                        prefix='ff_logit_lstm_lbc', activ='linear')
+        logit_prev_lbc = get_layer('ff')[1](tparams, emb_copy_pred, options,
+                                        prefix='ff_logit_prev_lbc', activ='linear')
+        logit_ctx_lbc = get_layer('ff')[1](tparams, ctxs_ctxs2, options,
+                                       prefix='ff_logit_ctx_lbc', activ='linear')
+        logit = tensor.tanh(logit_lstm_lbc+logit_prev_lbc+logit_ctx_lbc)
+        if options['use_dropout']:
+            logit = dropout_layer(logit, use_noise, trng, p=1.0-options['kwargs'].get('use_dropout_p', 0.5))
+        logit = get_layer('ff')[1](tparams, logit, options, 
+                               prefix='ff_logit_lbc', activ='linear')
+    else:
+        logit_lstm = get_layer('ff')[1](tparams, next_state, options,
+                                        prefix='ff_logit_lstm', activ='linear')
+        logit_prev = get_layer('ff')[1](tparams, emb_copy, options,
+                                        prefix='ff_logit_prev', activ='linear')
+        logit_ctx = get_layer('ff')[1](tparams, ctxs, options,
+                                       prefix='ff_logit_ctx', activ='linear')
+        logit = tensor.tanh(logit_lstm+logit_prev+logit_ctx)
+        if options['use_dropout']:
+            logit = dropout_layer(logit, use_noise, trng, p=1.0-options['kwargs'].get('use_dropout_p', 0.5))
+        logit = get_layer('ff')[1](tparams, logit, options,
+                                   prefix='ff_logit', activ='linear')
 
     # compute the softmax probability
     next_probs = tensor.nnet.softmax(logit)
@@ -2725,6 +2889,8 @@ def train(rng=123,
     if reload_ and os.path.exists(saveto):
         with open('%s.pkl' % saveto, 'rb') as f:
             models_options = pkl.load(f)
+        if decoder == 'gru_cond_legacy_lbc':
+            model_options['decoder'] = decoder
 
     print 'Loading data'
     train = TextIterator(datasets[0], datasets[1],
@@ -2803,8 +2969,32 @@ def train(rng=123,
     f_cost = theano.function(inps, cost, profile=profile)
     print 'Done'
 
+    if model_options['decoder'] == 'gru_cond_legacy_lbc':
+        # tparams2 = tparams
+        # del tparams2['ff_logit_lstm_W']
+        # del tparams2['ff_logit_prev_W']
+        # del tparams2['ff_logit_ctx_W']
+        # del tparams2['ff_logit_W']
+        # del tparams2['ff_logit_lstm_b']
+        # del tparams2['ff_logit_prev_b']
+        # del tparams2['ff_logit_ctx_b']
+        # del tparams2['ff_logit_b']
+    
+        keys = ('ff_logit_lstm_lbc_W',
+                'ff_logit_prev_lbc_W',
+                'ff_logit_ctx_lbc_W',
+                'ff_logit_lbc_W',
+                'ff_logit_lstm_lbc_b',
+                'ff_logit_prev_lbc_b',
+                'ff_logit_ctx_lbc_b',
+                'ff_logit_lbc_b')
+        tparams_sub = OrderedDict({x: tparams[x] for x in keys if x in tparams})
+    else:
+        tparams_sub = tparams
+
+
     print 'Computing gradient...',
-    grads = tensor.grad(cost, wrt=itemlist(tparams))
+    grads = tensor.grad(cost, wrt=itemlist(tparams_sub))
     print 'Done'
 
     # apply gradient clipping here
@@ -2822,7 +3012,7 @@ def train(rng=123,
     # compile the optimizer, the actual computational graph is compiled here
     lr = tensor.scalar(name='lr')
     print 'Building optimizers...',
-    f_grad_shared, f_update = eval(optimizer)(lr, tparams, grads, inps, cost)
+    f_grad_shared, f_update = eval(optimizer)(lr, tparams_sub, grads, inps, cost)
     print 'Done'
 
     print 'Optimization'
