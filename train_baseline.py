@@ -18,6 +18,7 @@ parser.add_argument('-data', '--dataset', required=False, default='testing', hel
 parser.add_argument('-m', '--model', required=False, default='baseline', help='ex: baseline, lbc, lbc_tot')
 parser.add_argument('-bs', '--batch_size', required=False, default='64', help='Size of the batch')
 parser.add_argument('-out', '--out_dir', required=False, default='.', help='Output directory for the model')
+parser.add_argument('-p', '--patience', required=False, default='5', help='Patience')
 
 #parser.add_argument('-ec', '--euclidean_coeff', default=0.1, type=float, help='Coefficient of the Euclidean distance in the cost (if coverage vector is used).')
 #parser.add_argument('-ca', '--covVec_in_attention', action="store_true", help='Coverage vector connected to the attentional part.')
@@ -35,8 +36,9 @@ dataset = args.dataset
 model = str(args.model)
 batch_size = int(args.batch_size)
 reload_path = args.reload_path
+patience = int(args.patience)
 
-list_options = [str(model), str(dim_word), str(dim_model), str(lr), str(batch_size)]
+list_options = [str(model), str(dim_word), str(dim_model), str(lr), str(batch_size), str(patience)]
 
 #Create names and folders
 ####################################################################################
@@ -159,7 +161,7 @@ validerr, testerr, validbleu, testbleu , nb_epoch, nb_batch = train(saveto=model
                                                                     alpha_c=0.,
                                                                     clip_c=1.,
                                                                     lrate=lr,
-                                                                    patience=5,
+                                                                    patience=patience,
                                                                     maxlen=50,
                                                                     batch_size=batch_size,
                                                                     valid_batch_size=batch_size,
